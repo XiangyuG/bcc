@@ -24,15 +24,22 @@ int tc_pass(struct __sk_buff *skb) {
     struct iphdr *ip = (void*)(eth + 1);
     if ((void*)(ip + 1) > data_end)
         return TC_ACT_OK;
-    bpf_trace_printk("src=%x dst=%x\\n", ip->saddr, ip->daddr);
-    unsigned char *s = (unsigned char *)&ip->saddr;
-    unsigned char *d = (unsigned char *)&ip->daddr;
+    bool src_is_local = ((ip->saddr & __constant_htonl(0xFF000000)) == __constant_htonl(0x7F000000));
+    bool dst_is_local = ((ip->daddr & __constant_htonl(0xFF000000)) == __constant_htonl(0x7F000000));
 
-    bpf_trace_printk("SRC=%d.%d\\n", s[0], s[1]);
-    bpf_trace_printk("%d.%d\\n", s[2], s[3]);
+    if (!src_is_local && dst_is_local) {
+        bool established_or_related = skb->mark & 0x4000;
+        // DNAT connections carry mark 0x2000
+        bool dnat = skb->mark & 0x2000;
 
-    bpf_trace_printk("DST=%d.%d\\n", d[0], d[1]);
-    bpf_trace_printk("%d.%d\\n", d[2], d[3]);
+        if (!established_or_related && !dnat) {
+            bpf_trace_printk("DROP(non-local->local) mark=%x\\n", skb->mark);
+            return TC_ACT_SHOT;
+        } else {
+            bpf_trace_printk("ALLOW(non-local->local) mark=%x\\n", skb->mark);
+        }
+    }
+
 
     return TC_ACT_OK;
 }
